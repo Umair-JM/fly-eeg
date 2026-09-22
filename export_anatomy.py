@@ -119,7 +119,39 @@ def main():
         m["regions"] = {int(k): round(float(row[k] / tot), 3) for k in top if row[k] > 0} if tot else {}
     inside = ok.mean()
     print(f"{inside:.0%} of skeleton nodes lie within 20 um of a neuropil", flush=True)
-    (a.out / "anatomy.json").write_text(json.dumps(dict(neurons=meta, regions=regions)))
+
+    # the signal's route, from the synapses: hop distance of every neuron from the antenna, then the
+    # synapse flow between the main regions of the drawn neurons along hop k -> hop k+1 edges
+    hop = np.full(len(ne), -1, np.int32); hop[is_jo] = 0
+    frontier = is_jo.copy()
+    for k in range(1, 6):
+        nxt = np.zeros(len(ne), bool); nxt[post[frontier[pre]]] = True; nxt &= hop < 0
+        hop[nxt] = k; frontier = nxt
+    skip = {"ME", "LO", "LOP", "LA", "AME", "CV-anterior", "CRN"}
+    top_region = np.full(len(ne), -1, np.int32)
+    for m, row in zip(meta, counts):
+        row = row.copy()
+        for k, r in enumerate(regions):
+            if r["label"] in skip: row[k] = 0
+        if row.sum(): top_region[m["node"]] = int(row.argmax())
+        m["hop"] = int(hop[m["node"]])
+    src = np.where(is_jo[pre], -1, top_region[pre]); dst = top_region[post]
+    use = (dst >= 0) & ((src >= 0) | is_jo[pre]) & (hop[pre] >= 0) & (hop[post] == hop[pre] + 1) & (src != dst)
+    flows = {}
+    for s_, d_, w, h in zip(src[use], dst[use], syn[use], hop[pre][use]):
+        key = (int(s_), int(d_), int(h)); flows[key] = flows.get(key, 0.0) + float(w)
+    flows = sorted(flows.items(), key=lambda kv: -kv[1])
+    keep_flows = []
+    for (s_, d_, h), w in flows:
+        if h <= 3 and (len([f for f in keep_flows if f["hop"] == h]) < 8):
+            keep_flows.append(dict(src=s_, dst=d_, hop=h, w=round(w)))
+    dn_regions = {}
+    for m in meta:
+        if m["group"] == 3 and top_region[m["node"]] >= 0: dn_regions[int(top_region[m["node"]])] = dn_regions.get(int(top_region[m["node"]]), 0) + 1
+    print("route:", [(regions[f["src"]]["label"] if f["src"] >= 0 else "Antenna", regions[f["dst"]]["label"], f["hop"], f["w"]) for f in keep_flows[:12]])
+    print("descending neurons mostly in:", sorted(dn_regions.items(), key=lambda kv: -kv[1])[:5])
+    (a.out / "anatomy.json").write_text(json.dumps(dict(neurons=meta, regions=regions, flows=keep_flows,
+                                                         dn_regions=sorted(dn_regions.items(), key=lambda kv: -kv[1])[:6])))
 
 
 if __name__ == "__main__":
