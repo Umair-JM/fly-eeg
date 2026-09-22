@@ -65,7 +65,7 @@
     uniforms: { act: { value: actTex }, base: { value: baseTex } }, transparent: true, depthWrite: false,
     vertexShader: `attribute float nid; uniform sampler2D act; uniform sampler2D base; varying vec4 vC;
       void main() { vec2 uv = vec2((nid + 0.5) / ${TEX_W}.0, 0.5); float a = texture2D(act, uv).r; vec4 b = texture2D(base, uv);
-        vC = vec4(b.rgb * (0.95 - 0.35 * a), b.a * (0.20 + 0.75 * a)); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        vC = vec4(mix(vec3(0.72, 0.75, 0.80), b.rgb * 0.85, a), b.a * (0.12 + 0.85 * a)); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `varying vec4 vC; void main() { gl_FragColor = vC; }`,
   });
   const drawn = neurons.map((n, s) => n.group !== 3 || s % 4 === 0);     // a quarter of the descending neurons is enough to see
@@ -114,45 +114,6 @@
   flows.unshift({ a: INPUT, b: ANT, hop: 0, w: Math.max(...flows.map(f => f.w)), src: -2, dst: -1 });
   for (const [rid, n] of anat.dn_regions.slice(0, 3)) flows.push({ a: regionCentre[rid], b: DEC, hop: maxHop + 1, w: n * 80, src: rid, dst: -3 });
   flows.push({ a: DEC, b: OUT, hop: maxHop + 2, w: 4000, src: -3, dst: -4 });
-  const LAST = maxHop + 2, wMax = Math.max(...flows.map(f => f.w));
-  const HOP_COL = ['#e8562a', '#e8562a', '#d9412f', '#b8336a', '#7d3fa0', '#178f60', '#178f60', '#178f60'];
-  const parts = [];
-  flows.forEach(f => {
-    const n = Math.round(8 + 50 * Math.sqrt(f.w / wMax));
-    const mid = f.a.clone().add(f.b).multiplyScalar(0.5), dir = f.b.clone().sub(f.a), len = dir.length();
-    const ctrl = mid.add(new THREE.Vector3(-dir.y, dir.x, 0).normalize().multiplyScalar(0.22 * len)).add(new THREE.Vector3(0, 0.18 * len, 0));
-    const cc = new THREE.Color(HOP_COL[Math.min(f.hop, HOP_COL.length - 1)]);
-    for (let i = 0; i < n; i++) parts.push({ f, ctrl, off: Math.random() * 0.45, cc, jitter: new THREE.Vector3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20) });
-  });
-  const NP = parts.length, pPos = new Float32Array(NP * 3), pCol = new Float32Array(NP * 3), pSize = new Float32Array(NP), pAlpha = new Float32Array(NP);
-  const pGeom = new THREE.BufferGeometry();
-  pGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-  pGeom.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
-  pGeom.setAttribute('size', new THREE.BufferAttribute(pSize, 1));
-  pGeom.setAttribute('alpha', new THREE.BufferAttribute(pAlpha, 1));
-  scene.add(new THREE.Points(pGeom, new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, depthTest: false,
-    vertexShader: `attribute float size; attribute float alpha; attribute vec3 color; varying vec4 vC;
-      void main() { vC = vec4(color, alpha); vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (900.0 / -mv.z) * ${Math.min(devicePixelRatio, 2).toFixed(1)}; gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `varying vec4 vC; void main() { float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard;
-      gl_FragColor = vec4(vC.rgb, vC.a * smoothstep(0.5, 0.15, d)); }`,
-  })));
-  const tmp = new THREE.Vector3();
-  // hopProgress[h] in [0, 1+]: how far the pulse of hop h has travelled; each particle starts at its own offset
-  function placeParticles(hopProgress) {
-    for (let i = 0; i < NP; i++) {
-      const q = parts[i], u = Math.min(1, Math.max(0, (hopProgress[q.f.hop] - q.off) / (1 - 0.45)));
-      const on = hopProgress[q.f.hop] > q.off && u < 1;
-      const a = q.f.a, b = q.f.b, k = q.ctrl;
-      tmp.set((1 - u) * (1 - u) * a.x + 2 * (1 - u) * u * k.x + u * u * b.x, (1 - u) * (1 - u) * a.y + 2 * (1 - u) * u * k.y + u * u * b.y, (1 - u) * (1 - u) * a.z + 2 * (1 - u) * u * k.z + u * u * b.z).add(q.jitter);
-      pPos[3 * i] = tmp.x; pPos[3 * i + 1] = tmp.y; pPos[3 * i + 2] = tmp.z;
-      pCol[3 * i] = q.cc.r; pCol[3 * i + 1] = q.cc.g; pCol[3 * i + 2] = q.cc.b;
-      pSize[i] = on ? 7 : 0; pAlpha[i] = on ? 0.9 * Math.sin(Math.PI * u) + 0.1 : 0;
-    }
-    pGeom.attributes.position.needsUpdate = pGeom.attributes.color.needsUpdate = pGeom.attributes.size.needsUpdate = pGeom.attributes.alpha.needsUpdate = true;
-  }
-
   // ---- labels: HTML, projected every frame, so they stay crisp ----
   const labelBox = document.getElementById('labels'), labels = [];
   function label(text, at, cls = '', color = '') {
@@ -200,14 +161,20 @@
   const regW = regions.map(() => []);
   neurons.forEach((n, s) => { if (n.group === 1 || n.group === 2) return; for (const r in n.regions) regW[r].push([s, n.regions[r]]); });
   const dev = new Float32Array(S), regAct = new Float32Array(regions.length);
-  // gate: 0 = brain at rest (before the signal arrives), 1 = playing the recorded activity
-  function activity(sample, gate, motorGlow) {
+  const HOPS = 4;                                        // synaptic layers the wave sweeps through in the brain stage
+  // level of every neuron for the current stage: the synaptic wave (by hop distance from the
+  // antenna) times its recorded activity at this sample
+  function activity(sample, name, p) {
     const a = acts[epoch], { mu, sd } = stats[epoch], off = sample * N;
     for (let s = 0; s < S; s++) {
-      const n = neurons[s], raw = a[off + n.node];
-      let v = n.group === 1 || n.group === 2 ? raw / 255 : Math.min(1, Math.max(0, (raw - mu[s]) / (2.5 * sd[s] + 3)));
-      v *= gate;
-      if (n.group === 3) v = Math.max(v, motorGlow);
+      const n = neurons[s], raw = a[off + n.node], ant = n.group === 1 || n.group === 2;
+      const rec = ant ? raw / 255 : Math.min(1, Math.max(0, (raw - mu[s]) / (2.5 * sd[s] + 3)));
+      const hop = n.hop < 0 ? HOPS : Math.min(n.hop, HOPS);
+      let v = 0;
+      if (name === 'antenna') v = ant ? Math.min(1, p * 1.3) : 0;
+      else if (name === 'brain') { const w = Math.min(1, Math.max(0, (p * (HOPS + 0.8) - hop) / 0.6)); v = ant ? 0.7 + 0.3 * rec : w * (0.4 + 0.6 * rec); }
+      else if (name === 'motor') v = n.group === 3 ? 0.6 + 0.4 * Math.sin(Math.PI * Math.min(1, p)) : 0.3 * (0.4 + 0.6 * rec);
+      else if (name === 'decoder' || name === 'output' || name === 'done') v = n.group === 3 ? 0.75 : 0.22;
       dev[s] = v; actData[4 * s] = v * 255;
     }
     actTex.needsUpdate = true;
@@ -215,7 +182,7 @@
       if (r.out) return;
       let num = 0, den = 0;
       for (const [s, w] of regW[k]) { num += w * dev[s]; den += w; }
-      const v = den ? Math.min(1, 2.2 * num / den) : 0;
+      const v = name === 'brain' && den ? Math.min(1, 2.2 * num / den) : 0;   // regions glow only while the wave passes
       regAct[k] = v;
       const m = regionMesh[k].material;
       m.opacity = 0.09 + 0.35 * v; m.color.setRGB(0.54 + 0.4 * v, 0.59 - 0.2 * v, 0.70 - 0.55 * v);
@@ -252,7 +219,6 @@
     { name: 'done', dur: 1e12 },
   ];
   $('send').onclick = () => { stageT = performance.now(); stageIdx = 0; $('gain').textContent = ''; };
-  const hopProgress = new Float32Array(LAST + 1);
 
   function trace(cv, series, colors, upto, lineW, rows = 1) {
     const g = cv.getContext('2d'), W = cv.width, H = cv.height, h = H / rows;
@@ -287,19 +253,7 @@
     const after = s => stageT !== null && stageIdx > STAGE.findIndex(x => x.name === s);
     const inT = name === 'input' ? Math.floor(p * (T - 1)) : after('input') ? T - 1 : -1;
     const brainT = name === 'brain' ? Math.floor(p * (T - 1)) : after('brain') ? T - 1 : 0;
-    const gate = name === 'brain' ? 1 : after('brain') ? 0.25 : 0;
-    const motorGlow = name === 'motor' ? Math.sin(Math.PI * Math.min(1, p)) : 0;
-    activity(brainT, gate, motorGlow);
-    hopProgress.fill(0);
-    if (name === 'antenna') hopProgress[0] = p * 1.45;
-    if (after('antenna')) hopProgress[0] = 2;
-    if (name === 'brain') for (let h = 1; h <= maxHop; h++) hopProgress[h] = Math.max(0, (p * (maxHop + 0.6) - (h - 1))) ;
-    if (after('brain')) for (let h = 1; h <= maxHop; h++) hopProgress[h] = 2;
-    if (name === 'decoder') hopProgress[maxHop + 1] = p * 1.45;
-    if (after('decoder')) hopProgress[maxHop + 1] = 2;
-    if (name === 'output') hopProgress[maxHop + 2] = p * 1.45;
-    if (after('output')) hopProgress[maxHop + 2] = 2;
-    placeParticles(hopProgress);
+    activity(brainT, name, p);
     glow(inBlock, name === 'input' || name === 'antenna'); glow(inLink, name === 'antenna');
     glow(decBlock, name === 'decoder' || name === 'output'); glow(outLink, name === 'output'); glow(outBlock, name === 'output' || name === 'done');
     trace(plots.noisy, [e.noisy], ['#e8562a'], inT, [1.4]);
