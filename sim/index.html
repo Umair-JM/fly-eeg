@@ -4,62 +4,152 @@
 <meta charset="utf-8">
 <title>Fly Brain</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg: #ffffff; --panel: #f4f6fa; --ink: #1a2030; --muted: #6b7386; --line: #d9dee8;
-          --in: #e8562a; --out: #178f60; --ant: #e08a1e; --brain: #4a7bd0; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, Segoe UI, Roboto, sans-serif; }
-  #app { display: grid; grid-template-columns: 1fr 400px; height: 100vh; }
-  #view { position: relative; min-width: 0; overflow: hidden; cursor: grab; }
+  :root {
+    --ink: #10141c; --ink-2: #454e60; --muted: #7c8599; --hair: #e3e7ee; --card: #ffffff;
+    --in: #e04f24; --out: #0f9d63; --ant: #e0921b; --accent: #2f6df0;
+    --shadow: 0 1px 2px rgba(16,20,28,.04), 0 8px 24px rgba(16,20,28,.06);
+    --font: 'Inter', system-ui, Segoe UI, Roboto, sans-serif;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; color: var(--ink); font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; }
+  body { background: #fff; }
+  #app { display: grid; grid-template-columns: 1fr 392px; height: 100vh; }
+
+  /* ---------- scene ---------- */
+  #view { position: relative; min-width: 0; overflow: hidden; cursor: grab;
+          background: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #f3f6fb 55%, #e8edf6 100%); }
+  #view:active { cursor: grabbing; }
   #view canvas { display: block; }
-  #title { position: absolute; left: 18px; top: 14px; font-size: 22px; font-weight: 600; pointer-events: none; }
-  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; }
+  #brand { position: absolute; left: 28px; top: 24px; pointer-events: none; }
+  #brand h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  #brand p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); letter-spacing: .04em; }
   #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-  #labels div { position: absolute; transform: translate(-50%, -50%); font-weight: 700; font-size: 15px; letter-spacing: .02em; white-space: nowrap;
-                text-shadow: 0 0 4px #fff, 0 0 8px #fff, 0 0 12px #fff; transition: opacity .25s; }
-  #labels div.big { font-size: 19px; }
-  #labels div.region { color: #5b6478; font-size: 13px; }
-  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 12px 16px; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button { background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
-  button.on { border-color: var(--out); color: var(--out); }
-  button.send { background: var(--in); color: #fff; border-color: var(--in); font-weight: 600; }
-  input[type=range] { width: 100px; }
-  .lab { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
-  .lab b { color: var(--ink); }
-  canvas.plot { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  #noisy, #out { height: 88px; }
-  #motor { height: 118px; }
-  .arrow { text-align: center; color: var(--muted); font-size: 18px; line-height: 1; margin: -2px 0; }
-  .chain { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
-  .chain span { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; color: var(--ink); background: #fff; }
-  .chain span.ant { border-color: var(--ant); } .chain span.brn { border-color: var(--brain); } .chain span.mot, .chain span.dec { border-color: var(--out); }
-  #gain { font-size: 15px; color: var(--out); font-weight: 600; }
-  @media (max-width: 900px) { #app { grid-template-columns: 1fr; grid-template-rows: 50vh 1fr; } #panel { border-left: 0; border-top: 1px solid var(--line); overflow-y: auto; } }
+  #labels div { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 600; font-size: 13px;
+                transition: opacity .3s, color .3s; }
+  #labels div.station { font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; padding: 3px 9px; border-radius: 6px;
+                        background: rgba(255,255,255,.88); box-shadow: 0 0 0 1px rgba(16,20,28,.07); }
+  #labels div.station.hot { box-shadow: 0 0 0 1px currentColor; }
+  #labels div.region { transition: none; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 2px 6px; border-radius: 5px;
+                       background: rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(200,64,31,.25); }
+  #railnote { position: absolute; left: 28px; right: 28px; top: 136px; font-size: 11.5px; color: #9aa2b1; pointer-events: none; }
+  #hint { position: absolute; left: 28px; bottom: 22px; color: var(--muted); font-size: 12px; pointer-events: none; }
+
+  /* ---------- stage rail ---------- */
+  #rail { position: absolute; left: 28px; right: 28px; top: 96px; display: flex; gap: 6px; }
+  .step .bar { height: 3px; border-radius: 2px; background: #dfe4ee; overflow: hidden; }
+  .step .bar i { display: block; height: 100%; width: 0; background: var(--ink); border-radius: 2px; transition: background .3s; }
+  .step span { display: block; margin-top: 7px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #aeb5c4; transition: color .25s; }
+  .step.on span { color: var(--ink); }
+  .step.done span { color: var(--ink-2); }
+  .step.done .bar i { width: 100%; background: #aab3c4; }
+  #rail.finished .step .bar i { width: 100%; background: var(--ink); }
+  #rail.finished .step span { color: var(--ink); }
+
+  /* ---------- panel ---------- */
+  #panel { background: #fbfcfe; border-left: 1px solid var(--hair); padding: 20px 22px 16px; display: grid;
+           grid-template-rows: auto auto auto minmax(0, 1fr) auto; gap: 12px; overflow: hidden; }
+  .seg { display: flex; background: #eef1f7; border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button { flex: 1; border: 0; background: transparent; border-radius: 7px; padding: 7px 0; font: 600 12.5px var(--font); color: var(--ink-2); cursor: pointer; transition: .18s; }
+  .seg button.on { background: #fff; color: var(--ink); box-shadow: var(--shadow); }
+  .controls { display: flex; gap: 8px; }
+  #send { position: relative; flex: 1; border: 0; border-radius: 10px; padding: 12px 0; background: var(--ink); color: #fff;
+          font: 600 14px var(--font); letter-spacing: .01em; cursor: pointer; transition: .18s; overflow: hidden; }
+  #send:hover { background: #262c38; }
+  #send i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(255,255,255,.18); transition: width .1s linear; }
+  #send b { position: relative; font-weight: 600; }
+  #pause { border: 1px solid var(--hair); background: #fff; border-radius: 10px; padding: 0 14px; font: 600 13px var(--font); color: var(--ink-2); cursor: pointer; }
+  #pause:disabled { color: #c0c6d2; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg button[aria-checked="true"] { background: var(--ink); color: #fff; box-shadow: none; }
+  .key { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font); font-size: 10.5px; color: var(--muted); }
+  .key i { width: 12px; height: 0; border-top-style: solid; display: inline-block; }
+  #camchip { position: absolute; right: 22px; top: 24px; display: none; align-items: center; gap: 8px; background: rgba(255,255,255,.9);
+             border: 1px solid var(--hair); border-radius: 8px; padding: 5px 8px 5px 10px; font-size: 11.5px; color: var(--ink-2); }
+  #camchip.show { display: flex; }
+  #camchip button { border: 0; background: #eef1f7; border-radius: 6px; padding: 3px 7px; font: 600 11px var(--font); color: var(--ink); cursor: pointer; }
+  #rail { pointer-events: auto; }
+  .step { flex: 1; cursor: pointer; background: none; border: 0; padding: 0; text-align: left; font: inherit; }
+  .step:hover .bar { background: #c9d1e0; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
+
+  .flow { display: flex; flex-direction: column; gap: 7px; overflow-y: auto; min-height: 0; padding-right: 2px; }
+  .node { border: 1px solid var(--hair); border-radius: 12px; background: var(--card); padding: 10px 12px; transition: .3s; }
+  .node.live { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(16,20,28,.06); }
+  .node .hd { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .node .hd b { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .node .hd em { font-style: normal; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .fieldlab { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: -6px; }
+  canvas.plot { width: 100%; display: block; border-radius: 6px; }
+  .tie { display: flex; justify-content: center; color: #c3cad6; font-size: 11px; line-height: 1; margin: -3px 0; }
+  .stack { display: flex; gap: 7px; align-items: stretch; }
+  .stack .pill { flex: 1; text-align: center; border: 1px dashed #dfe4ec; border-radius: 9px; padding: 7px 4px; background: transparent; transition: .3s; cursor: default; }
+  .stack .pill.live { border-style: solid; border-color: var(--ink); background: #fff; }
+  .stack .pill b { display: block; font-size: 12px; font-weight: 600; }
+  .stack .pill span { display: block; font-size: 10px; color: var(--muted); font-family: var(--font); margin-top: 3px; line-height: 1.25; }
+
+  #score { border-top: 1px solid var(--hair); padding-top: 11px; min-height: 108px; opacity: 0; transition: opacity .5s; }
+  #score.show { opacity: 1; }
+  .scorehd { display: flex; align-items: baseline; gap: 10px; }
+  #score b { font-size: 27px; font-weight: 700; letter-spacing: -.02em; color: var(--out); font-family: var(--mono); }
+  #score span { font-size: 11.5px; color: var(--muted); line-height: 1.3; }
+  #bench { width: 100%; height: 62px; display: block; margin-top: 4px; }
+  @media (max-width: 1040px) { #app { grid-template-columns: 1fr; grid-template-rows: 52vh 1fr; } #panel { border-left: 0; border-top: 1px solid var(--hair); overflow-y: auto; } #rail { top: auto; bottom: 18px; } }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="view">
-    <div id="title">Fly brain</div>
-    <div id="loading">loading</div>
+    <div id="brand"><h1>Fly brain</h1><p>MaleCNS connectome &middot; 34,257 neurons, wiring fixed &middot; cleaning a 2 s EEG epoch</p></div>
+    <div id="rail"></div>
+    <div id="railnote">recorded playback &middot; walkthrough 14 s for a 2 s epoch &middot; in the model these six stages all run at every one of the 512 samples</div>
+    <div id="loading">loading connectome</div>
     <div id="labels"></div>
+    <div id="hint">drag to orbit &middot; scroll to zoom &middot; click a stage on the rail to jump there</div>
+    <div id="camchip">Camera: manual<button id="camreset">follow stages</button></div>
+    <div class="sr" id="live" aria-live="polite"></div>
   </div>
+
   <div id="panel">
-    <div class="row" id="epochs"></div>
-    <div class="row"><button id="send" class="send">Send epoch</button><span id="stage" style="color:var(--muted);font-size:14px"></span></div>
-    <div class="lab"><b style="color:var(--in)">Input signal</b></div>
-    <canvas id="noisy" class="plot"></canvas>
-    <div class="arrow">&#8595;</div>
-    <div class="lab"><b>Fly model</b></div>
-    <div class="chain"><span class="ant">Antenna 672</span>&#8594;<span class="brn">Brain 34,257</span>&#8594;<span class="mot">Motor 1,421</span></div>
-    <div class="lab">Motor neurons</div>
-    <canvas id="motor" class="plot"></canvas>
-    <div class="arrow">&#8595;</div>
-    <div class="chain"><span class="dec">Decoder</span></div>
-    <div class="arrow">&#8595;</div>
-    <div class="lab"><b style="color:var(--out)">Output</b> <span style="color:#333;text-transform:none;letter-spacing:0">black = true EEG</span></div>
-    <canvas id="out" class="plot"></canvas>
-    <div id="gain"></div>
+    <div class="fieldlab">Noise level of the epoch</div>
+    <div class="seg" id="epochs"></div>
+    <div class="controls"><button id="send"><i></i><b>Send epoch</b></button><button id="pause" disabled>Pause</button></div>
+
+    <div class="flow">
+      <div class="node" id="n-in">
+        <div class="hd"><b style="color:var(--in)">Input</b><em id="in-snr">noisy EEG</em></div>
+        <canvas id="noisy" class="plot"></canvas>
+      </div>
+      <div class="tie">&#9660;</div>
+      <div class="stack">
+        <div class="pill" id="n-ant"><b style="color:var(--ant)">Antenna</b><span>672 &middot; EEG as current</span></div>
+        <div class="pill" id="n-brain"><b>Brain</b><span>fixed &middot; 0 trained</span></div>
+        <div class="pill" id="n-motor"><b style="color:var(--out)">Motor</b><span>1,421</span></div>
+      </div>
+      <div class="node" id="n-mot">
+        <div class="hd"><b>Motor neurons</b><em>6 of 1,421</em></div>
+        <canvas id="motor" class="plot"></canvas>
+      </div>
+      <div class="tie">&#9660;</div>
+      <div class="stack"><div class="pill" id="n-dec"><b>Decoder</b><span>the only trained part &middot; 3.9M weights</span></div></div>
+      <div class="tie">&#9660;</div>
+      <div class="node" id="n-out">
+        <div class="hd"><b style="color:var(--out)">Output</b><em id="out-cc">grey = true EEG</em></div>
+        <div style="display:flex;gap:12px;margin:-2px 0 6px"><span class="key"><i style="border-top-width:3px;border-color:#9aa2b1"></i>true EEG</span><span class="key"><i style="border-top-width:2px;border-color:#0f9d63"></i>fly output</span></div>
+        <canvas id="out" class="plot"></canvas>
+      </div>
+    </div>
+
+    <div id="score">
+      <div class="scorehd"><b id="score-v"></b><span id="score-t"></span></div>
+      <canvas id="bench"></canvas>
+    </div>
   </div>
 </div>
 <script src="./js/vendor/three.min.js"></script>

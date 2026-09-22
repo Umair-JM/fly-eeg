@@ -34,7 +34,7 @@ def main():
     p.add_argument("--out", type=Path, default=F.HERE / "sim" / "data")
     p.add_argument("--n-targets", type=int, default=250, help="first synaptic targets of the antenna neurons")
     p.add_argument("--n-brain", type=int, default=400, help="random central brain neurons for context")
-    p.add_argument("--max-nodes", type=int, default=400)
+    p.add_argument("--max-nodes", type=int, default=110)
     a = p.parse_args()
     rng = np.random.default_rng(0)
 
