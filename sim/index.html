@@ -5,28 +5,31 @@
 <title>Fly Brain</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { --bg: #0b0e14; --panel: #10141d; --ink: #e6e9ef; --muted: #8a93a6; --line: #232a3a;
-          --in: #ff7a59; --out: #3ddc97; --ant: #ffb347; --brain: #6fa8ff; }
+  :root { --bg: #07090f; --panel: #0f131c; --ink: #e6e9ef; --muted: #8a93a6; --line: #232a3a;
+          --in: #ff7a59; --out: #3ddc97; --ant: #ffb347; --brain: #7fb2ff; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, Segoe UI, Roboto, sans-serif; }
   #app { display: grid; grid-template-columns: 1fr 400px; height: 100vh; }
-  #view { position: relative; min-width: 0; overflow: hidden; }
+  #view { position: relative; min-width: 0; overflow: hidden; cursor: grab; }
   #view canvas { display: block; }
   #title { position: absolute; left: 18px; top: 14px; font-size: 22px; font-weight: 600; pointer-events: none; }
   #legend { position: absolute; left: 18px; bottom: 16px; color: var(--muted); font-size: 13px; line-height: 1.8; pointer-events: none; }
   #legend b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; }
-  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; }
+  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 14px 16px; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   button { background: #1c2333; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
   button.on { border-color: var(--out); color: var(--out); }
   input[type=range] { width: 100px; }
-  .lab { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .lab { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
   .lab b { color: var(--ink); }
-  canvas.plot { width: 100%; background: #0e121b; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  #noisy, #out { height: 120px; }
-  #raster { height: 170px; }
-  .arrow { text-align: center; color: var(--muted); font-size: 20px; line-height: 1; margin: -4px 0; }
+  canvas.plot { width: 100%; background: #0b0f17; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  #noisy, #out { height: 110px; }
+  #motor { height: 150px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 18px; line-height: 1; margin: -2px 0; }
+  .chain { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .chain span { border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; color: var(--ink); }
+  .chain span.ant { border-color: var(--ant); } .chain span.brn { border-color: var(--brain); } .chain span.mot, .chain span.dec { border-color: var(--out); }
   #gain { font-size: 15px; color: var(--out); }
-  #gain span { color: var(--muted); font-size: 13px; }
   @media (max-width: 900px) { #app { grid-template-columns: 1fr; grid-template-rows: 50vh 1fr; } #panel { border-left: 0; border-top: 1px solid var(--line); overflow-y: auto; } }
 </style>
 </head>
@@ -34,22 +37,27 @@
 <div id="app">
   <div id="view">
     <div id="title">Fly brain</div>
+    <div id="loading">loading</div>
     <div id="legend">
-      <b style="background:var(--ant)"></b>signal in (antenna)<br>
-      <b style="background:var(--brain)"></b>fly brain<br>
-      <b style="background:var(--out)"></b>motor neurons (signal out)
+      <b style="background:var(--ant)"></b>antenna<br>
+      <b style="background:var(--brain)"></b>brain<br>
+      <b style="background:var(--out)"></b>motor
     </div>
   </div>
   <div id="panel">
     <div class="row" id="epochs"></div>
     <div class="row"><button id="play">Pause</button><input id="speed" type="range" min="0.25" max="8" step="0.25" value="2"><span id="clock" style="color:var(--muted);font-size:13px"></span></div>
-    <div class="lab"><b style="color:var(--in)">In</b> noisy EEG</div>
+    <div class="lab"><b style="color:var(--in)">Input signal</b></div>
     <canvas id="noisy" class="plot"></canvas>
     <div class="arrow">&#8595;</div>
-    <div class="lab"><b>Fly brain</b> &#8594; motor neurons</div>
-    <canvas id="raster" class="plot"></canvas>
+    <div class="lab"><b>Fly model</b></div>
+    <div class="chain"><span class="ant">Antenna 672</span>&#8594;<span class="brn">Brain 34,257</span>&#8594;<span class="mot">Motor 1,421</span></div>
+    <div class="lab">Motor neurons</div>
+    <canvas id="motor" class="plot"></canvas>
     <div class="arrow">&#8595;</div>
-    <div class="lab"><b style="color:var(--out)">Out</b> cleaned EEG &nbsp;<span style="color:#fff">white = true clean EEG</span></div>
+    <div class="chain"><span class="dec">Decoder</span></div>
+    <div class="arrow">&#8595;</div>
+    <div class="lab"><b style="color:var(--out)">Output</b> <span style="color:#fff;text-transform:none;letter-spacing:0">white = true EEG</span></div>
     <canvas id="out" class="plot"></canvas>
     <div id="gain"></div>
   </div>
