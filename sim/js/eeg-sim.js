@@ -30,6 +30,8 @@
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x07090f);
   const camera = new THREE.PerspectiveCamera(40, 1, 1, 6000);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const key = new THREE.DirectionalLight(0xffffff, 0.8); scene.add(key);
 
   // ---- neuropil shell: one translucent mesh per region so a region can glow on its own ----
   const shellPos = new THREE.BufferAttribute(toScene(shellV), 3);
@@ -38,7 +40,7 @@
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', shellPos);
     g.setIndex(new THREE.BufferAttribute(shellF.subarray(r.f0 * 3, (r.f0 + r.nf) * 3), 1));
-    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x3b4d6e, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide }));
+    const m = new THREE.Mesh(g, new THREE.MeshPhongMaterial({ color: 0x9fb4d8, emissive: 0x000000, transparent: true, opacity: 0.10, depthWrite: false, side: THREE.DoubleSide, shininess: 40 }));
     scene.add(m);
     return m;
   });
@@ -58,15 +60,20 @@
   // ---- neurons: official skeletons as line segments; colour per neuron comes from two 1-D textures ----
   const TEX_W = 4096;
   const actData = new Uint8Array(TEX_W * 4), baseData = new Uint8Array(TEX_W * 4);
-  const BASE = { 0: [0.50, 0.70, 1.0], 1: [1.0, 0.70, 0.28], 2: [1.0, 0.70, 0.28], 3: [0.24, 0.90, 0.60] };
-  neurons.forEach((n, s) => { const b = BASE[n.group]; baseData[4 * s] = b[0] * 255; baseData[4 * s + 1] = b[1] * 255; baseData[4 * s + 2] = b[2] * 255; baseData[4 * s + 3] = n.group === 1 || n.group === 2 ? 255 : 110; });
+  const col = new THREE.Color();
+  neurons.forEach((n, s) => {
+    let h = n.body >>> 0; h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h = Math.imul(h ^ (h >>> 16), 0x45d9f3b); h ^= h >>> 16;   // hash body id -> hue
+    col.setHSL((h % 360) / 360, 0.9, 0.58);
+    baseData[4 * s] = col.r * 255; baseData[4 * s + 1] = col.g * 255; baseData[4 * s + 2] = col.b * 255;
+    baseData[4 * s + 3] = n.group === 1 || n.group === 2 ? 255 : 120;
+  });
   const actTex = new THREE.DataTexture(actData, TEX_W, 1, THREE.RGBAFormat), baseTex = new THREE.DataTexture(baseData, TEX_W, 1, THREE.RGBAFormat);
   baseTex.needsUpdate = true;
   const lineMat = new THREE.ShaderMaterial({
     uniforms: { act: { value: actTex }, base: { value: baseTex } }, transparent: true, depthWrite: false,
     vertexShader: `attribute float nid; uniform sampler2D act; uniform sampler2D base; varying vec4 vC;
       void main() { vec2 uv = vec2((nid + 0.5) / ${TEX_W}.0, 0.5); float a = texture2D(act, uv).r; vec4 b = texture2D(base, uv);
-        vC = vec4(b.rgb * (0.35 + 1.1 * a) + vec3(0.8 * a * a), b.a * (0.25 + 0.75 * a)); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        vC = vec4(b.rgb * (0.55 + 0.9 * a) + vec3(0.35 * a * a), b.a * (0.30 + 0.6 * a)); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `varying vec4 vC; void main() { gl_FragColor = vC; }`,
   });
   const keepSeg = []; const yCut = yMax + 30, zCut = zMax + 30;   // beyond the brain shell (ventral y, posterior z) = neck and body
@@ -109,14 +116,13 @@
   scene.add(new THREE.LineSegments(wireGeom, lineMat));
 
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.autoRotate = true; controls.autoRotateSpeed = 0.5; controls.enableDamping = true;
+  controls.autoRotate = false; controls.enableDamping = true;
+  controls.addEventListener('start', () => controls.userMoved = true);
   controls.target.set(-110, -20, 0);
-  camera.position.set(-110, 80, -1250);
+  camera.position.set(-110, 80, -2600);
+  let t0 = null;                                        // the dolly-in starts on the first drawn frame
   function resize() { const w = view.clientWidth, h = view.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
   addEventListener('resize', resize); resize();
-  let down = null;                                      // a click (no drag) stops or resumes the rotation
-  view.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
-  view.addEventListener('pointerup', e => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) controls.autoRotate = !controls.autoRotate; down = null; });
 
   // ---- per-neuron and per-region activity ----
   const stats = acts.map(a => {
@@ -145,9 +151,10 @@
       const v = den ? Math.min(1, 2.2 * num / den) : 0;
       regAct[k] = v;
       const m = regionMesh[k].material;
-      m.opacity = 0.06 + 0.45 * v; m.color.setRGB(0.23 + 0.7 * v, 0.30 + 0.55 * v, 0.43 + 0.3 * v);
-      regionLabel[k].material.opacity = v > 0.25 ? Math.min(1, (v - 0.25) * 3) : 0;
+      m.opacity = 0.10 + 0.40 * v; m.emissive.setRGB(0.9 * v, 0.55 * v, 0.15 * v);
     });
+    const top = regions.filter(r => !r.optic && regAct[r.k] > 0.3).sort((a, b) => regAct[b.k] - regAct[a.k]).slice(0, 4);
+    regions.forEach(r => { if (!r.optic) regionLabel[r.k].material.opacity = top.includes(r) ? Math.min(1, (regAct[r.k] - 0.3) * 3) : 0; });
   }
 
   // ---- panel ----
@@ -198,6 +205,10 @@
     trace(plots.motor, motorCache, ['#3ddc97'], t, [1.1], 6);
     trace(plots.out, [e.clean, e.decoded], ['#ffffff', '#3ddc97'], Math.max(0, t - meta.lag), [1.2, 1.6]);
     $('clock').textContent = `${(t / meta.fs).toFixed(2)} s`;
+    if (t0 === null) t0 = now;
+    const u = Math.min(1, (now - t0) / 2500), ease = 1 - Math.pow(1 - u, 3);
+    if (u <= 1 && !controls.userMoved) camera.position.z = -2600 + (2600 - 1250) * ease;
+    key.position.copy(camera.position);
     controls.update();
     renderer.render(scene, camera);
   }
