@@ -2,80 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Fly Brain EEG Cleaner</title>
+<title>Fly Brain</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { --bg: #0b0e14; --panel: #131824; --ink: #e6e9ef; --muted: #8a93a6; --line: #232a3a;
-          --noisy: #ff7a59; --clean: #ffffff; --decoded: #3ddc97; --ant-pos: #ffb347; --ant-neg: #c792ea; --readout: #3ddc97; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, Segoe UI, Roboto, sans-serif; }
-  #app { display: grid; grid-template-columns: 1fr 440px; height: 100vh; }
+  :root { --bg: #0b0e14; --panel: #10141d; --ink: #e6e9ef; --muted: #8a93a6; --line: #232a3a;
+          --in: #ff7a59; --out: #3ddc97; --ant: #ffb347; --brain: #6fa8ff; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, Segoe UI, Roboto, sans-serif; }
+  #app { display: grid; grid-template-columns: 1fr 400px; height: 100vh; }
   #view { position: relative; min-width: 0; overflow: hidden; }
   #view canvas { display: block; }
-  #legend { position: absolute; left: 16px; bottom: 14px; color: var(--muted); font-size: 12px; line-height: 1.7; pointer-events: none; }
-  #legend b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
-  #title { position: absolute; left: 16px; top: 12px; pointer-events: none; }
-  #title h1 { margin: 0; font-size: 18px; font-weight: 600; }
-  #title p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 14px 16px; overflow-y: auto; overflow-x: hidden; }
-  #panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 14px 0 6px; }
+  #title { position: absolute; left: 18px; top: 14px; font-size: 22px; font-weight: 600; pointer-events: none; }
+  #legend { position: absolute; left: 18px; bottom: 16px; color: var(--muted); font-size: 13px; line-height: 1.8; pointer-events: none; }
+  #legend b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; }
+  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button { background: #1c2333; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
-  button.on { border-color: var(--decoded); color: var(--decoded); }
-  input[type=range] { width: 110px; }
-  canvas.plot { width: 100%; height: 96px; background: #0e121b; border: 1px solid var(--line); border-radius: 6px; display: block; }
-  canvas#raster { height: 130px; }
-  .cap { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
-  .cap span { font-weight: 600; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  td { padding: 3px 0; border-bottom: 1px solid var(--line); }
-  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-  #status { color: var(--muted); font-size: 12px; margin-top: 10px; }
-  @media (max-width: 900px) { #app { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; } #panel { border-left: 0; border-top: 1px solid var(--line); } }
+  button { background: #1c2333; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
+  button.on { border-color: var(--out); color: var(--out); }
+  input[type=range] { width: 100px; }
+  .lab { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .lab b { color: var(--ink); }
+  canvas.plot { width: 100%; background: #0e121b; border: 1px solid var(--line); border-radius: 6px; display: block; }
+  #noisy, #out { height: 120px; }
+  #raster { height: 170px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 20px; line-height: 1; margin: -4px 0; }
+  #gain { font-size: 15px; color: var(--out); }
+  #gain span { color: var(--muted); font-size: 13px; }
+  @media (max-width: 900px) { #app { grid-template-columns: 1fr; grid-template-rows: 50vh 1fr; } #panel { border-left: 0; border-top: 1px solid var(--line); overflow-y: auto; } }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="view">
-    <div id="title"><h1>Fly brain as an EEG cleaner</h1><p>MaleCNS central brain, 34,257 neurons at their real soma positions, driven by a real noisy EEG epoch</p></div>
+    <div id="title">Fly brain</div>
     <div id="legend">
-      <b style="background:var(--ant-pos)"></b>antenna, positive half wave (336 JO neurons)<br>
-      <b style="background:var(--ant-neg)"></b>antenna, negative half wave (336 JO neurons)<br>
-      <b style="background:#6fa8ff"></b>brain neurons, brightness = activity<br>
-      <b style="background:var(--readout)"></b>descending and motor neurons, read by the decoder (1,421)
+      <b style="background:var(--ant)"></b>signal in (antenna)<br>
+      <b style="background:var(--brain)"></b>fly brain<br>
+      <b style="background:var(--out)"></b>motor neurons (signal out)
     </div>
   </div>
   <div id="panel">
-    <h2>Epoch</h2>
     <div class="row" id="epochs"></div>
-    <h2>Playback</h2>
-    <div class="row">
-      <button id="play">Pause</button>
-      <label>speed <input id="speed" type="range" min="0.25" max="8" step="0.25" value="2"></label>
-      <span id="clock" class="cap" style="margin:0"></span>
-    </div>
-    <h2>1. Noisy EEG in, through the antenna</h2>
+    <div class="row"><button id="play">Pause</button><input id="speed" type="range" min="0.25" max="8" step="0.25" value="2"><span id="clock" style="color:var(--muted);font-size:13px"></span></div>
+    <div class="lab"><b style="color:var(--in)">In</b> noisy EEG</div>
     <canvas id="noisy" class="plot"></canvas>
-    <div class="cap">EEG + eye artifact, input SNR <span id="snrin"></span> dB. Each sample drives the antenna neurons for one step.</div>
-    <h2>2. Motor neurons out</h2>
+    <div class="arrow">&#8595;</div>
+    <div class="lab"><b>Fly brain</b> &#8594; motor neurons</div>
     <canvas id="raster" class="plot"></canvas>
-    <div class="cap">Activity of the 1,421 readout neurons (rows) over time. 1,421 views of the recent EEG at every moment.</div>
-    <h2>3. Decoded EEG vs clean truth</h2>
+    <div class="arrow">&#8595;</div>
+    <div class="lab"><b style="color:var(--out)">Out</b> cleaned EEG &nbsp;<span style="color:#fff">white = true clean EEG</span></div>
     <canvas id="out" class="plot"></canvas>
-    <div class="cap"><span style="color:var(--decoded)">decoded</span> = trained readout of the motor neurons; <span>white</span> = the clean EEG the dataset hid under the artifact. The readout looks 24 samples (94 ms) ahead.</div>
-    <h2>This epoch</h2>
-    <table>
-      <tr><td>input SNR</td><td id="m_in"></td></tr>
-      <tr><td>SNR gain after the fly</td><td id="m_gain"></td></tr>
-      <tr><td>correlation with clean EEG</td><td id="m_cc"></td></tr>
-      <tr><td>relative RMSE</td><td id="m_rrmse"></td></tr>
-    </table>
-    <h2>Benchmark, 500 held out epochs (EOG)</h2>
-    <table>
-      <tr><td>linear filter, no brain</td><td>+8.09 dB, CC 0.838</td></tr>
-      <tr><td>fly brain, linear readout</td><td>+10.21 dB, CC 0.899</td></tr>
-      <tr><td>fly brain, MLP readout</td><td>+11.33 dB, CC 0.920</td></tr>
-    </table>
-    <div id="status">loading 53 MB of recorded activity...</div>
+    <div id="gain"></div>
   </div>
 </div>
 <script src="./js/vendor/three.min.js"></script>

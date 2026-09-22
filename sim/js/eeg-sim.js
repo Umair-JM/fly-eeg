@@ -2,7 +2,6 @@
 // every EEG sample) for real test epochs, exported by export_sim.py into sim/data/.
 (async function () {
   const DATA = './data/';
-  const status = document.getElementById('status');
   const [meta, pos, group] = await Promise.all([
     fetch(DATA + 'meta.json').then(r => r.json()),
     fetch(DATA + 'pos.bin').then(r => r.arrayBuffer()).then(b => new Float32Array(b)),
@@ -10,7 +9,16 @@
   ]);
   const N = meta.n, T = meta.t;
   const acts = await Promise.all(meta.epochs.map((_, k) => fetch(DATA + `act_${k}.bin`).then(r => r.arrayBuffer()).then(b => new Uint8Array(b))));
-  status.textContent = `${N.toLocaleString()} neurons, ${T} samples per epoch at ${meta.fs} Hz, ${meta.epochs.length} epochs loaded`;
+  // each neuron's typical level per epoch: the brain is drawn as deviation from it, so the wave
+  // the signal sends through the network is visible instead of the steady background activity
+  const stats = acts.map(a => {
+    const mu = new Float32Array(N), sd = new Float32Array(N);
+    for (let s = 0; s < T; s++) { const o = s * N; for (let i = 0; i < N; i++) mu[i] += a[o + i]; }
+    for (let i = 0; i < N; i++) mu[i] /= T;
+    for (let s = 0; s < T; s++) { const o = s * N; for (let i = 0; i < N; i++) { const d = a[o + i] - mu[i]; sd[i] += d * d; } }
+    for (let i = 0; i < N; i++) sd[i] = Math.sqrt(sd[i] / T);
+    return { mu, sd };
+  });
 
   // ---- 3D scene: one point per neuron, size 0 hides neurons without a soma position ----
   const view = document.getElementById('view');
@@ -26,12 +34,12 @@
   for (let i = 0; i < N; i++) if (group[i] !== 255) { c[0] += pos[3 * i]; c[1] += pos[3 * i + 1]; c[2] += pos[3 * i + 2]; n_pos++; }
   c[0] /= n_pos; c[1] /= n_pos; c[2] /= n_pos;
   const xyz = new Float32Array(3 * N), size = new Float32Array(N), color = new Float32Array(3 * N);
-  const BASE = { 0: [0.20, 0.30, 0.48], 1: [1.0, 0.70, 0.28], 2: [0.78, 0.57, 0.92], 3: [0.24, 0.86, 0.59] };
+  const BASE = { 0: [0.28, 0.42, 0.66], 1: [1.0, 0.70, 0.28], 2: [1.0, 0.70, 0.28], 3: [0.24, 0.86, 0.59] };
   for (let i = 0; i < N; i++) {
     xyz[3 * i] = pos[3 * i] - c[0];
     xyz[3 * i + 1] = -(pos[3 * i + 1] - c[1]);      // EM y grows ventrally; screen up = dorsal
     xyz[3 * i + 2] = pos[3 * i + 2] - c[2];
-    size[i] = group[i] === 255 ? 0 : group[i] === 0 ? 3.0 : 4.2;
+    size[i] = group[i] === 255 ? 0 : group[i] === 0 ? 3.6 : 4.6;
   }
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(xyz, 3));
@@ -48,7 +56,7 @@
   scene.add(new THREE.Points(geom, mat));
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.autoRotate = true; controls.autoRotateSpeed = 0.6; controls.enableDamping = true;
-  camera.position.set(0, 100, 640);
+  camera.position.set(0, 40, 600); controls.target.set(0, -50, 0);
   function resize() {
     const w = view.clientWidth, h = view.clientHeight;
     renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -68,7 +76,7 @@
   const labels = ['hard', 'typical', 'mild'];
   meta.epochs.forEach((e, k) => {
     const b = document.createElement('button');
-    b.textContent = `${labels[k] || 'epoch ' + k}: ${e.snr_in.toFixed(1)} dB in`;
+    b.textContent = labels[k] || 'epoch ' + k;
     b.onclick = () => setEpoch(k);
     epochBox.appendChild(b);
   });
@@ -76,11 +84,7 @@
     epoch = k; t = 0; pos_s = 0;
     [...epochBox.children].forEach((b, i) => b.classList.toggle('on', i === k));
     const e = meta.epochs[k];
-    $('snrin').textContent = e.snr_in.toFixed(1);
-    $('m_in').textContent = e.snr_in.toFixed(1) + ' dB';
-    $('m_gain').textContent = '+' + e.snr_gain.toFixed(1) + ' dB';
-    $('m_cc').textContent = e.cc.toFixed(3);
-    $('m_rrmse').textContent = e.rrmse.toFixed(3);
+    $('gain').innerHTML = `+${e.snr_gain.toFixed(1)} dB cleaner <span>(in ${e.snr_in.toFixed(1)} dB, out ${(e.snr_in + e.snr_gain).toFixed(1)} dB, correlation with true EEG ${e.cc.toFixed(2)})</span>`;
     buildRaster();
   }
   function buildRaster() {
@@ -117,10 +121,12 @@
   }
 
   function paintNeurons(sample) {
-    const a = acts[epoch], off = sample * N;
+    const a = acts[epoch], { mu, sd } = stats[epoch], off = sample * N;
     for (let i = 0; i < N; i++) {
-      const b = BASE[group[i]] || BASE[0], v = a[off + i] / 255;
-      const k = 0.45 + 1.6 * v, w = 0.9 * v * v;      // rest = dim base colour, active = bright and whiter
+      const b = BASE[group[i]] || BASE[0];
+      // antenna: absolute drive; everything else: how far above its own typical level it is now
+      const v = group[i] === 1 || group[i] === 2 ? a[off + i] / 255 : Math.min(1, Math.max(0, (a[off + i] - mu[i]) / (2.5 * sd[i] + 3)));
+      const k = 0.6 + 1.8 * v, w = 1.2 * v * v;
       color[3 * i] = b[0] * k + w; color[3 * i + 1] = b[1] * k + w; color[3 * i + 2] = b[2] * k + w;
     }
     geom.attributes.color.needsUpdate = true;
@@ -136,7 +142,7 @@
     trace(plots.noisy, [e.noisy], ['#ff7a59'], t, [1.4]);
     drawRaster(t);
     trace(plots.out, [e.clean, e.decoded], ['#ffffff', '#3ddc97'], Math.max(0, t - meta.lag), [1.2, 1.6]);
-    $('clock').textContent = `sample ${t} / ${T}  (${(t / meta.fs).toFixed(2)} s)`;
+    $('clock').textContent = `${(t / meta.fs).toFixed(2)} s`;
     controls.update();
     renderer.render(scene, camera);
   }
