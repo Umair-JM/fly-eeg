@@ -308,9 +308,9 @@ def oscilloscope():
 
     # recessed screen area on the front face (front = -Y)
     bez = cube(1, loc=(-0.055, -D / 2 - 0.0015, 0.012), scale=(0.098, 0.004, 0.068), bevel=0.003, segments=2)
-    put(bez, dark, True)
-    scr = cube(1, loc=(-0.055, -D / 2 - 0.004, 0.012), scale=(0.090, 0.0012, 0.060))
-    put(scr, screen_m, False, "Screen")
+    put(bez, dark)
+    scr = cube(1, loc=(-0.055, -D / 2 - 0.0088, 0.012), scale=(0.089, 0.0011, 0.059))
+    put(scr, screen_m, False, "Screen")   # sits proud of the bezel, or the bezel hides it
     parts += [bez, scr]
 
     # soft function buttons down the right of the screen and along the bottom

@@ -104,12 +104,12 @@
   const actTex = new THREE.DataTexture(actData, TEX_W, 1, THREE.RGBAFormat), baseTex = new THREE.DataTexture(baseData, TEX_W, 1, THREE.RGBAFormat);
   baseTex.needsUpdate = true;
   const lineMat = new THREE.ShaderMaterial({
-    uniforms: { act: { value: actTex }, base: { value: baseTex } }, transparent: true, depthWrite: false,
-    vertexShader: `attribute float nid; uniform sampler2D act; uniform sampler2D base; varying vec4 vC;
+    uniforms: { act: { value: actTex }, base: { value: baseTex }, uFade: { value: 1 } }, transparent: true, depthWrite: false,
+    vertexShader: `attribute float nid; uniform float uFade; uniform sampler2D act; uniform sampler2D base; varying vec4 vC;
       void main() {
         vec2 uv = vec2((nid + 0.5) / ${TEX_W}.0, 0.5);
         float a = texture2D(act, uv).r; vec4 b = texture2D(base, uv);
-        vC = vec4(mix(vec3(0.60, 0.64, 0.72), b.rgb, smoothstep(0.0, 0.5, a)), b.a * (0.34 + 0.66 * a));
+        vC = vec4(mix(vec3(0.60, 0.64, 0.72), b.rgb, smoothstep(0.0, 0.5, a)), b.a * (0.34 + 0.66 * a) * uFade);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `varying vec4 vC; void main() { gl_FragColor = vC; }`,
@@ -146,7 +146,7 @@
     obj.updateMatrixWorld(true);
     const b2 = new THREE.Box3().setFromObject(obj), ctr = new THREE.Vector3();
     b2.getCenter(ctr);
-    obj.position.copy(at).sub(ctr.sub(obj.position));
+    obj.position.add(at).sub(ctr);       // shift by (target - current centre); copying first doubled it
     obj.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = false; } });
     scene.add(obj);
     return obj;
@@ -206,22 +206,41 @@
     scene.add(new THREE.Line(g, m));
     return m;
   }
-  const capBox = new THREE.Box3().setFromObject(capGLB), pcbBox = new THREE.Box3().setFromObject(pcbGLB), scopeBox = new THREE.Box3().setFromObject(scopeGLB);
+  // the body of each model, found by the material Blender gave it, so a cable or a stand cannot
+  // drag the anchor off the object
+  function bodyBox(root, materialName) {
+    root.updateMatrixWorld(true);
+    const b = new THREE.Box3();
+    root.traverse(o => { if (o.isMesh && o.material && o.material.name === materialName) b.expandByObject(o); });
+    return b.isEmpty() ? new THREE.Box3().setFromObject(root) : b;
+  }
+  const capBox = bodyBox(capGLB, 'skin'), pcbBox = bodyBox(pcbGLB, 'solder_mask'), scopeBox = bodyBox(scopeGLB, 'case');
   const inWire = connector(new THREE.Vector3(capBox.min.x + BW * 0.04, capBox.min.y + BH * 0.18, 0), ANT, 0xe04f24, 0.16);
   const outWire = connector(new THREE.Vector3(pcbBox.min.x, CHIP.y, 0), new THREE.Vector3(scopeBox.max.x, SCOPE.y - BH * 0.10, 0), 0x0f9d63, 0.20);
 
-  // descending neurons into the chip
   const motorSlots = neurons.map((n, s) => s).filter(s => neurons[s].group === 3 && group[neurons[s].node] !== 255);
+  // The readout: every descending neuron reaches the board, but drawn as a gathered harness rather
+  // than 1,400 straight lines converging on the camera's own target, which blinds the decoder shot.
+  const GATHER = new THREE.Vector3(bbox.min.x - BW * 0.10, CHIP.y + BH * 0.16, 0);
   const fan = [], fanId = [];
-  for (let k = 0; k < motorSlots.length; k += 3) {
-    const s = motorSlots[k], n = neurons[s].node, p = toScene(new Float32Array([pos[3 * n], pos[3 * n + 1], pos[3 * n + 2]]));
-    fan.push(p[0], p[1], p[2], pcbBox.max.x, CHIP.y + (Math.random() - 0.5) * BH * 0.28, (Math.random() - 0.5) * BH * 0.20);
-    fanId.push(s, s);
+  for (let k = 0; k < motorSlots.length; k += 9) {
+    const sl = motorSlots[k], n = neurons[sl].node;
+    const p = toScene(new Float32Array([pos[3 * n], pos[3 * n + 1], pos[3 * n + 2]]));
+    const a = new THREE.Vector3(p[0], p[1], p[2]);
+    const g = GATHER.clone().add(new THREE.Vector3(0, (Math.random() - 0.5) * BH * 0.10, (Math.random() - 0.5) * BH * 0.10));
+    const b = new THREE.Vector3(pcbBox.max.x, CHIP.y + (Math.random() - 0.5) * BH * 0.12, (Math.random() - 0.5) * BH * 0.08);
+    const curve = new THREE.QuadraticBezierCurve3(a, g, b).getPoints(10);
+    for (let i = 0; i < curve.length - 1; i++) {
+      fan.push(curve[i].x, curve[i].y, curve[i].z, curve[i + 1].x, curve[i + 1].y, curve[i + 1].z);
+      fanId.push(sl, sl);
+    }
   }
   const fanGeom = new THREE.BufferGeometry();
   fanGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(fan), 3));
   fanGeom.setAttribute('nid', new THREE.BufferAttribute(new Float32Array(fanId), 1));
-  scene.add(new THREE.LineSegments(fanGeom, lineMat));
+  const fanMat = lineMat.clone();                    // its own fade, so the readout survives the arbors dimming
+  fanMat.uniforms.act.value = actTex; fanMat.uniforms.base.value = baseTex;
+  scene.add(new THREE.LineSegments(fanGeom, fanMat));
 
   // ---- labels: one or two words, nothing else ----
   const labelBox = $('labels'), labels = [];
@@ -229,10 +248,12 @@
     const d = document.createElement('div'); d.textContent = text; d.className = cls; if (colour) d.style.color = colour;
     labelBox.appendChild(d); const L = { d, at, alpha: 1 }; labels.push(L); return L;
   }
-  label('EEG cap', new THREE.Vector3(CAP.x, capBox.max.y + BH * 0.10, 0), 'station', '#e04f24');
+  const cc = new THREE.Vector3(), pc = new THREE.Vector3(), sc2 = new THREE.Vector3();
+  capBox.getCenter(cc); pcbBox.getCenter(pc); scopeBox.getCenter(sc2);
+  label('EEG cap', new THREE.Vector3(cc.x, capBox.max.y + BH * 0.12, cc.z), 'station', '#e04f24');
   const antLab = label('Antenna', ANT.clone().add(new THREE.Vector3(0, -BH * 0.16, 0)), 'station', '#e0921b');
-  label('Decoder', new THREE.Vector3(CHIP.x, pcbBox.max.y + BH * 0.10, 0), 'station', '#10141c');
-  label('Output', new THREE.Vector3(SCOPE.x, scopeBox.max.y + BH * 0.10, 0), 'station', '#0f9d63');
+  label('Decoder', new THREE.Vector3(pc.x, pcbBox.max.y + BH * 0.12, pc.z), 'station', '#10141c');
+  label('Output', new THREE.Vector3(sc2.x, scopeBox.max.y + BH * 0.12, sc2.z), 'station', '#0f9d63');
   const regionCentre = regions.map(r => V3(toScene(new Float32Array(r.centre))));
   const flowByLabel = {};
   anat.flows.forEach(f => { const L = regions[f.dst].label; flowByLabel[L] = (flowByLabel[L] || 0) + f.w; });
@@ -259,11 +280,11 @@
   const SHOT = {
     wide: { at: centre, d: 2.25, el: 0.15, az: 0 },
     input: { at: CAP.clone().lerp(ANT, 0.28), d: 0.95, el: 0.13, az: -0.16 },
-    antenna: { at: ANT.clone().lerp(new THREE.Vector3(0, 0, 0), 0.35), d: 1.05, el: 0.09, az: -0.20 },
+    antenna: { at: ANT.clone().lerp(new THREE.Vector3(0, 0, 0), 0.45), d: 1.35, el: 0.12, az: -0.22 },
     brain: { at: new THREE.Vector3(0, -BH * 0.02, 0), d: 1.45, el: 0.21, az: 0.15 },
-    motor: { at: new THREE.Vector3(CHIP.x * 0.55, CHIP.y + BH * 0.20, 0), d: 1.05, el: 0.17, az: -0.10 },
-    decoder: { at: CHIP.clone(), d: 0.62, el: 0.16, az: -0.10 },
-    output: { at: SCOPE.clone(), d: 0.52, el: 0.08, az: 0 },
+    motor: { at: new THREE.Vector3(CHIP.x * 0.55, CHIP.y + BH * 0.24, 0), d: 1.15, el: 0.26, az: -0.12 },
+    decoder: { at: CHIP.clone(), d: 0.72, el: 0.26, az: -0.20 },
+    output: { at: SCOPE.clone(), d: 0.62, el: 0.12, az: -0.08 },
   };
   const SPAN = CAP.distanceTo(SCOPE);
   // the wide shot is measured, not guessed: fit the whole chain, both axes, with a margin
@@ -284,8 +305,8 @@
     const d = s === SHOT.wide ? fitDistance() : s.d * SPAN * 0.56;
     return o.set(s.at.x + Math.sin(s.az) * d, s.at.y + Math.sin(s.el) * d, s.at.z - Math.cos(s.az) * Math.cos(s.el) * d);
   };
-  let userCam = false, shotFrom = null, shotTo = SHOT.wide, shotT = 1;
-  function setShot(s) { if (!s || s === shotTo) return; shotFrom = { pos: camera.position.clone(), tgt: controls.target.clone() }; shotTo = s; shotT = 0; }
+  let userCam = false, shotFrom = null, shotTo = SHOT.wide, shotStart = -1e9;
+  function setShot(s) { if (!s || s === shotTo) return; shotFrom = { pos: camera.position.clone(), tgt: controls.target.clone() }; shotTo = s; shotStart = performance.now(); }
   shotPos(SHOT.wide, camera.position); controls.target.copy(SHOT.wide.at);
 
   function resize() {
@@ -320,7 +341,7 @@
       const rec = ant ? a[o + n.node] / 255 : Math.min(1, Math.max(0, (a[o + n.node] - mu[s]) / (2.5 * sd[s] + 3)));
       const hop = n.hop < 0 ? HOPS : Math.min(n.hop, HOPS);
       let v = (k === 'idle' || k === 'input') ? 0.30 : 0;
-      if (k === 'antenna') v = ant ? Math.min(1, p * 1.4) : 0.12;
+      if (k === 'antenna') v = ant ? Math.min(1, p * 1.4) : 0.26;
       else if (k === 'brain') { const w = Math.min(1, Math.max(0, (p * (HOPS + 0.9) - hop) / 0.55)); v = ant ? 0.75 + 0.25 * rec : w * (0.35 + 0.65 * rec); }
       else if (k === 'motor') v = n.group === 3 ? 0.65 + 0.35 * Math.sin(Math.PI * Math.min(1, p)) : 0.24 * (0.4 + 0.6 * rec);
       else if (k === 'decoder' || k === 'output' || k === 'done') v = n.group === 3 ? 0.8 : 0.20;
@@ -389,12 +410,17 @@
     const L = 6, R = W - 6, X = v => L + (v + 0.6) / 13.6 * (R - L), y = 32;
     g.strokeStyle = '#e4e8ee'; g.lineWidth = 2; g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke();
     g.font = '600 9px Inter, system-ui, sans-serif'; g.textBaseline = 'middle';
+    const lanes = [[], []];                                  // two label rows, so close ticks never collide
     BENCH.forEach((b, i) => {
-      const x = X(b.v), up = i === 2;
+      const x = X(b.v), up = i % 2 === 0 ? 0 : 1;
       g.strokeStyle = b.tone; g.lineWidth = 2;
-      g.beginPath(); g.moveTo(x, y - (up ? 8 : 0)); g.lineTo(x, y + (up ? 0 : 8)); g.stroke();
-      g.fillStyle = b.tone; g.textAlign = i === 0 ? 'left' : 'center';
-      g.fillText(b.name, i === 0 ? L : Math.min(x, R - 34), up ? y - 14 : y + 16);
+      g.beginPath(); g.moveTo(x, y - (up ? 9 : 0)); g.lineTo(x, y + (up ? 0 : 9)); g.stroke();
+      const w = g.measureText(b.name).width;
+      let tx = Math.min(Math.max(x, L + w / 2), R - w / 2);
+      if (lanes[up].some(o => Math.abs(o - tx) < w + 6)) tx = Math.min(R - w / 2, tx + w / 2 + 8);
+      lanes[up].push(tx);
+      g.fillStyle = b.tone; g.textAlign = 'center';
+      g.fillText(b.name, tx, up ? y - 16 : y + 17);
     });
     g.fillStyle = '#10141c'; g.textAlign = 'center';
     const x = X(value);
@@ -450,8 +476,9 @@
 
   const ease = u => u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
   let last = performance.now();
-  function frame(now) {
+  function frame() {
     requestAnimationFrame(frame);
+    const now = performance.now();
     const dt = Math.min(now - last, 100); last = now;
     const e = meta.epochs[epoch];
     if (motorEpoch !== epoch) { motorCache = motorTrace(); motorEpoch = epoch; }
@@ -460,17 +487,19 @@
     let k = 'idle', p = 0, i = -1;
     if (elapsed >= 0) {
       let el = elapsed; i = 0;
-      while (i < STAGE.length && el > STAGE[i].dur) { el -= STAGE[i].dur; i++; }
+      while (i < STAGE.length && el >= STAGE[i].dur) { el -= STAGE[i].dur; i++; }
       if (i >= STAGE.length) { k = 'done'; i = STAGE.length - 1; p = 1; }
       else { k = STAGE[i].key; p = el / STAGE[i].dur; }
     }
     const started = kk => elapsed >= 0 && STAGE.findIndex(s => s.key === kk) <= i;
     const upto = kk => k === kk ? Math.floor(p * (T - 1)) : started(kk) ? T - 1 : -1;
 
-    if (i !== idx) {
-      idx = i;
+    const state = k === 'done' ? 'done' : i;
+    if (state !== idx) {
+      idx = state;
       STAGE.forEach((s, j) => { s.el.classList.toggle('on', j === i && k !== 'done'); s.el.classList.toggle('done', j < i || k === 'done'); });
       rail.classList.toggle('finished', k === 'done');
+      if (k === 'done') STAGE.forEach(st => st.fill.style.width = '100%');
       Object.values(LIVE).concat('c-mot').forEach(id => $(id).classList.remove('live'));
       if (LIVE[k]) $(LIVE[k]).classList.add('live');
       if (k === 'motor') $('c-mot').classList.add('live');
@@ -486,7 +515,10 @@
     if (i >= 0 && k !== 'done') STAGE[i].fill.style.width = (p * 100) + '%';
 
     activity(k === 'brain' ? Math.floor(p * (T - 1)) : started('brain') ? T - 1 : 0, k, p);
-    hullMat.uniforms.uDim.value = (k === 'decoder' || k === 'output' || k === 'done') ? 1 : 0;
+    const late = k === 'decoder' || k === 'output' || k === 'done';
+    hullMat.uniforms.uDim.value = late ? 1 : 0;
+    lineMat.uniforms.uFade.value += ((late ? 0.10 : 1) - lineMat.uniforms.uFade.value) * Math.min(1, dt / 260);
+    fanMat.uniforms.uFade.value += ((late ? 0.55 : 1) - fanMat.uniforms.uFade.value) * Math.min(1, dt / 260);
     inWire.uniforms.uHead.value = k === 'antenna' ? p * 1.25 : started('antenna') ? 1.25 : -1;
     outWire.uniforms.uHead.value = k === 'output' ? p * 1.25 : started('output') ? 1.25 : -1;
     antLab.alpha = k === 'antenna' || k === 'brain' ? 1 : 0.5;
@@ -503,7 +535,7 @@
     }
 
     if (!userCam) {
-      shotT = reduce ? 1 : Math.min(1, shotT + dt / 1100);
+      const shotT = reduce ? 1 : Math.min(1, (now - shotStart) / 1100);
       shotPos(shotTo, camAt);
       if (shotFrom) { const u = ease(shotT); camera.position.lerpVectors(shotFrom.pos, camAt, u); controls.target.lerpVectors(shotFrom.tgt, shotTo.at, u); }
       else { camera.position.copy(camAt); controls.target.copy(shotTo.at); }
@@ -515,5 +547,6 @@
     renderer.render(scene, camera);
   }
   requestAnimationFrame(frame);
-  window.sim = { scene, camera, controls, SHOT, neurons, segments: keep.length };
+  window.sim = { scene, camera, controls, SHOT, neurons, segments: keep.length,
+    debug: () => ({ shot: Object.keys(SHOT).find(k => SHOT[k] === shotTo), userCam, shotStart, now: performance.now() }) };
 })();
