@@ -20,6 +20,9 @@
     bin('pos.bin', Float32Array), bin('group.bin', Uint8Array),
   ]);
   const acts = await Promise.all(meta.epochs.map((_, k) => bin(`act_${k}.bin`, Uint8Array)));
+  const gltf = new THREE.GLTFLoader();
+  const load = n => new Promise((res, rej) => gltf.load(`./models/${n}.glb${V}`, g => res(g.scene), null, rej));
+  const [capGLB, pcbGLB, scopeGLB] = await Promise.all([load('cap'), load('pcb'), load('scope')]);
   const OUTSIDE = new Set(['ME', 'LO', 'LOP', 'LA', 'AME', 'CV-anterior', 'CRN']);
   const N = meta.n, T = meta.t, neurons = anat.neurons, S = neurons.length;
   const regions = anat.regions.map((r, k) => ({ ...r, k, out: OUTSIDE.has(r.label) }));
@@ -33,10 +36,14 @@
   view.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 1, 14000);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.34));
-  const key = new THREE.DirectionalLight(0xffffff, 0.62);
-  const fill = new THREE.DirectionalLight(0xdce6f5, 0.22);
-  scene.add(key, fill);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new THREE.RoomEnvironment(), 0.04).texture;
+  const key = new THREE.DirectionalLight(0xffffff, 1.5);
+  const fill = new THREE.DirectionalLight(0xcfe0f5, 0.5);
+  scene.add(key, fill, new THREE.AmbientLight(0xffffff, 0.18));
 
   const hv = new Uint32Array(hullBuf, 0, 2), HNV = hv[0], HNF = hv[1];
   let off = 8;
@@ -126,69 +133,30 @@
   const ANT = acc.multiplyScalar(1 / an);
 
   // -------------------------------------------------------------- hardware ----
-  // The three things that are not the fly: the electrode the EEG came off, the chip that holds the
-  // trained readout, and the monitor the cleaned signal goes to. Built from primitives, to scale
-  // with the brain so the fly stays the biggest object in the frame.
-  const U = BH / 3.4;                                        // one "unit": the models are sized in these
-  const ELEC = new THREE.Vector3(BW * 0.95, BH * 0.10, 0);
-  const CHIP = new THREE.Vector3(-BW * 0.88, -BH * 0.16, 0);
-  const MON = new THREE.Vector3(-BW * 1.46, -BH * 0.10, 0);
-  const metal = (c, s, sh) => new THREE.MeshPhongMaterial({ color: c, specular: s, shininess: sh, flatShading: false });
-
-  function electrode(at) {
-    const g = new THREE.Group();
-    const skin = new THREE.Mesh(new THREE.SphereGeometry(U * 1.5, 40, 28, 0, Math.PI * 2, 0, 0.62),
-      new THREE.MeshPhongMaterial({ color: 0xe9cdb8, specular: 0x2a2018, shininess: 8, transparent: true, opacity: 0.92 }));
-    skin.rotation.z = -Math.PI / 2; skin.position.x = U * 0.55;
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(U * 0.42, U * 0.46, U * 0.16, 36), metal(0xd8dde4, 0x9aa3ad, 70));
-    const pin = new THREE.Mesh(new THREE.CylinderGeometry(U * 0.13, U * 0.13, U * 0.30, 24), metal(0xb9c0c8, 0x8f98a2, 80));
-    const gel = new THREE.Mesh(new THREE.CylinderGeometry(U * 0.30, U * 0.30, U * 0.05, 28),
-      new THREE.MeshPhongMaterial({ color: 0x9fd8ff, specular: 0xffffff, shininess: 120, transparent: true, opacity: 0.75 }));
-    for (const m of [cup, pin, gel]) m.rotation.z = Math.PI / 2;
-    cup.position.x = U * 0.06; pin.position.x = U * 0.26; gel.position.x = -U * 0.06;
-    const lead = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-      new THREE.Vector3(U * 0.38, 0, 0), new THREE.Vector3(U * 1.1, U * 0.5, U * 0.2),
-      new THREE.Vector3(U * 1.5, U * 1.4, -U * 0.1), new THREE.Vector3(U * 1.2, U * 2.3, 0)]), 40, U * 0.055, 12),
-      new THREE.MeshPhongMaterial({ color: 0x3a4250, shininess: 30 }));
-    g.add(skin, cup, pin, gel, lead);
-    g.position.copy(at); scene.add(g);
-    return g;
+  // Built in Blender (blender_hardware.py): a head in a 32 channel EEG cap, the decoder board, and
+  // a bench oscilloscope. Sized against the brain so the fly stays the subject; real relative scale
+  // would put a 0.5 mm brain next to a 200 mm head and you would see nothing.
+  function place(obj, at, widthFrac, rot) {
+    obj.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(obj), size = new THREE.Vector3();
+    b.getSize(size);
+    const k = (BW * widthFrac) / size.x;
+    obj.scale.setScalar(k);
+    obj.rotation.set(rot[0], rot[1], rot[2]);
+    obj.updateMatrixWorld(true);
+    const b2 = new THREE.Box3().setFromObject(obj), ctr = new THREE.Vector3();
+    b2.getCenter(ctr);
+    obj.position.copy(at).sub(ctr.sub(obj.position));
+    obj.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = false; } });
+    scene.add(obj);
+    return obj;
   }
-  function chip(at) {
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(U * 1.5, U * 1.5, U * 0.26),
-      new THREE.MeshPhongMaterial({ color: 0x23282f, specular: 0x2e343c, shininess: 22 }));
-    const lid = new THREE.Mesh(new THREE.BoxGeometry(U * 1.0, U * 1.0, U * 0.06), metal(0x3d434c, 0x7c848f, 70));
-    lid.position.z = -U * 0.16;
-    g.add(body, lid);
-    const pinGeo = new THREE.BoxGeometry(U * 0.10, U * 0.26, U * 0.05);
-    const gold = metal(0xd9b566, 0xfff0c0, 90);
-    for (let i = 0; i < 12; i++) {                            // two pin rows, as on a real package
-      const x = (i / 11 - 0.5) * U * 1.24;
-      for (const s of [1, -1]) {
-        const p = new THREE.Mesh(pinGeo, gold);
-        p.position.set(x, s * U * 0.86, 0); g.add(p);
-      }
-    }
-    g.position.copy(at); scene.add(g);
-    return g;
-  }
-  function monitor(at) {
-    const g = new THREE.Group();
-    const shell = new THREE.Mesh(new THREE.BoxGeometry(U * 2.3, U * 1.6, U * 0.16),
-      new THREE.MeshPhongMaterial({ color: 0x2a3038, specular: 0x3a424c, shininess: 26 }));
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(U * 2.06, U * 1.36),
-      new THREE.MeshBasicMaterial({ color: 0x0d1117, side: THREE.DoubleSide }));
-    glass.position.z = -U * 0.09;
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(U * 0.10, U * 0.13, U * 0.5, 20), metal(0x323942, 0x6a7480, 50));
-    neck.position.y = -U * 1.05;
-    const foot = new THREE.Mesh(new THREE.CylinderGeometry(U * 0.55, U * 0.62, U * 0.09, 32), metal(0x2a3038, 0x6a7480, 50));
-    foot.position.y = -U * 1.32;
-    g.add(shell, glass, neck, foot);
-    g.position.copy(at); scene.add(g);
-    return { g, glass };
-  }
-  const elecObj = electrode(ELEC), chipObj = chip(CHIP), monObj = monitor(MON);
+  const CAP = new THREE.Vector3(BW * 0.82, -BH * 0.02, 0);
+  const CHIP = new THREE.Vector3(-BW * 0.70, -BH * 0.24, 0);
+  const SCOPE = new THREE.Vector3(-BW * 1.16, -BH * 0.06, 0);
+  place(capGLB, CAP, 0.44, [0, -Math.PI * 0.72, 0]);
+  place(pcbGLB, CHIP, 0.40, [-1.05, Math.PI, 0]);
+  place(scopeGLB, SCOPE, 0.52, [0.08, Math.PI, 0]);
 
   // the two screens that actually show the signal: the monitor face, and the chip lid
   function screen(w, h) {
@@ -196,8 +164,10 @@
     const tex = new THREE.CanvasTexture(cv);
     return { cv, g: cv.getContext('2d'), tex, w, h };
   }
-  const monScreen = screen(384, 240);
-  monObj.glass.material = new THREE.MeshBasicMaterial({ map: monScreen.tex, side: THREE.DoubleSide });
+  const monScreen = screen(512, 320);
+  let screenMesh = null;
+  scopeGLB.traverse(o => { if (o.isMesh && o.material && /screen/i.test(o.material.name)) screenMesh = o; });
+  if (screenMesh) screenMesh.material = new THREE.MeshBasicMaterial({ map: monScreen.tex, toneMapped: false });
   function paintScreen(sc, series, colours, widths, upto, bg) {
     const { g, cv } = sc, W = cv.width, H = cv.height;
     g.fillStyle = bg; g.fillRect(0, 0, W, H);
@@ -220,7 +190,7 @@
     const pts = new THREE.QuadraticBezierCurve3(a, mid, b).getPoints(140);
     const tt = new Float32Array(pts.length);
     for (let i = 0; i < pts.length; i++) tt[i] = i / (pts.length - 1);
-    const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 140, U * 0.045, 8);
+    const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 140, BH * 0.011, 8);
     const tube = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0x9aa3b0, shininess: 20, transparent: true, opacity: 0.30 }));
     scene.add(tube);
     const g = new THREE.BufferGeometry().setFromPoints(pts);
@@ -236,15 +206,16 @@
     scene.add(new THREE.Line(g, m));
     return m;
   }
-  const inWire = connector(ELEC.clone().add(new THREE.Vector3(U * 1.2, U * 2.3, 0)), ANT, 0xe04f24, 0.16);
-  const outWire = connector(CHIP.clone().add(new THREE.Vector3(-U * 0.8, 0, 0)), MON.clone().add(new THREE.Vector3(U * 1.2, 0, 0)), 0x0f9d63, 0.20);
+  const capBox = new THREE.Box3().setFromObject(capGLB), pcbBox = new THREE.Box3().setFromObject(pcbGLB), scopeBox = new THREE.Box3().setFromObject(scopeGLB);
+  const inWire = connector(new THREE.Vector3(capBox.min.x + BW * 0.04, capBox.min.y + BH * 0.18, 0), ANT, 0xe04f24, 0.16);
+  const outWire = connector(new THREE.Vector3(pcbBox.min.x, CHIP.y, 0), new THREE.Vector3(scopeBox.max.x, SCOPE.y - BH * 0.10, 0), 0x0f9d63, 0.20);
 
   // descending neurons into the chip
   const motorSlots = neurons.map((n, s) => s).filter(s => neurons[s].group === 3 && group[neurons[s].node] !== 255);
   const fan = [], fanId = [];
   for (let k = 0; k < motorSlots.length; k += 3) {
     const s = motorSlots[k], n = neurons[s].node, p = toScene(new Float32Array([pos[3 * n], pos[3 * n + 1], pos[3 * n + 2]]));
-    fan.push(p[0], p[1], p[2], CHIP.x + U * 0.8, CHIP.y + (Math.random() - 0.5) * U * 1.3, CHIP.z + (Math.random() - 0.5) * U * 1.3);
+    fan.push(p[0], p[1], p[2], pcbBox.max.x, CHIP.y + (Math.random() - 0.5) * BH * 0.28, (Math.random() - 0.5) * BH * 0.20);
     fanId.push(s, s);
   }
   const fanGeom = new THREE.BufferGeometry();
@@ -258,10 +229,10 @@
     const d = document.createElement('div'); d.textContent = text; d.className = cls; if (colour) d.style.color = colour;
     labelBox.appendChild(d); const L = { d, at, alpha: 1 }; labels.push(L); return L;
   }
-  label('Electrode', ELEC.clone().add(new THREE.Vector3(0, U * 3.0, 0)), 'station', '#e04f24');
-  const antLab = label('Antenna', ANT.clone().add(new THREE.Vector3(0, -U * 0.7, 0)), 'station', '#e0921b');
-  label('Decoder', CHIP.clone().add(new THREE.Vector3(0, U * 1.25, 0)), 'station', '#10141c');
-  label('Output', MON.clone().add(new THREE.Vector3(0, U * 1.2, 0)), 'station', '#0f9d63');
+  label('EEG cap', new THREE.Vector3(CAP.x, capBox.max.y + BH * 0.10, 0), 'station', '#e04f24');
+  const antLab = label('Antenna', ANT.clone().add(new THREE.Vector3(0, -BH * 0.16, 0)), 'station', '#e0921b');
+  label('Decoder', new THREE.Vector3(CHIP.x, pcbBox.max.y + BH * 0.10, 0), 'station', '#10141c');
+  label('Output', new THREE.Vector3(SCOPE.x, scopeBox.max.y + BH * 0.10, 0), 'station', '#0f9d63');
   const regionCentre = regions.map(r => V3(toScene(new Float32Array(r.centre))));
   const flowByLabel = {};
   anat.flows.forEach(f => { const L = regions[f.dst].label; flowByLabel[L] = (flowByLabel[L] || 0) + f.w; });
@@ -284,19 +255,35 @@
   // ---- camera ----
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
-  const centre = new THREE.Vector3((ELEC.x + MON.x) / 2, -BH * 0.04, 0);
+  const centre = new THREE.Vector3((CAP.x + SCOPE.x) / 2, -BH * 0.04, 0);
   const SHOT = {
     wide: { at: centre, d: 2.25, el: 0.15, az: 0 },
-    input: { at: ELEC.clone().lerp(ANT, 0.30), d: 0.95, el: 0.13, az: -0.16 },
+    input: { at: CAP.clone().lerp(ANT, 0.28), d: 0.95, el: 0.13, az: -0.16 },
     antenna: { at: ANT.clone().lerp(new THREE.Vector3(0, 0, 0), 0.35), d: 1.05, el: 0.09, az: -0.20 },
     brain: { at: new THREE.Vector3(0, -BH * 0.02, 0), d: 1.45, el: 0.21, az: 0.15 },
-    motor: { at: new THREE.Vector3(CHIP.x * 0.45, CHIP.y + U * 0.6, 0), d: 1.55, el: 0.17, az: -0.10 },
-    decoder: { at: CHIP.clone().lerp(new THREE.Vector3(0, 0, 0), 0.22), d: 1.15, el: 0.11, az: -0.05 },
-    output: { at: CHIP.clone().lerp(MON, 0.62), d: 1.15, el: 0.09, az: 0 },
+    motor: { at: new THREE.Vector3(CHIP.x * 0.55, CHIP.y + BH * 0.20, 0), d: 1.05, el: 0.17, az: -0.10 },
+    decoder: { at: CHIP.clone(), d: 0.62, el: 0.16, az: -0.10 },
+    output: { at: SCOPE.clone(), d: 0.52, el: 0.08, az: 0 },
   };
-  const SPAN = ELEC.distanceTo(MON);
+  const SPAN = CAP.distanceTo(SCOPE);
+  // the wide shot is measured, not guessed: fit the whole chain, both axes, with a margin
+  function fitDistance(margin = 1.03) {
+    const b = new THREE.Box3();
+    [capGLB, pcbGLB, scopeGLB].forEach(o => b.expandByObject(o));
+    b.expandByPoint(new THREE.Vector3(bbox.min.x, bbox.min.y, bbox.min.z));
+    b.expandByPoint(new THREE.Vector3(bbox.max.x, bbox.max.y, bbox.max.z));
+    const size = new THREE.Vector3(); b.getSize(size);
+    b.getCenter(SHOT.wide.at);
+    const vFov = THREE.MathUtils.degToRad(camera.fov), aspect = Math.max(view.clientWidth / view.clientHeight, 0.6);
+    const dv = (size.y / 2) / Math.tan(vFov / 2);
+    const dh = (size.x / 2) / (Math.tan(vFov / 2) * aspect);
+    return (Math.max(dv, dh) + size.z / 2) * margin;
+  }
   const camAt = new THREE.Vector3();
-  const shotPos = (s, o) => { const d = s.d * SPAN * 0.56; return o.set(s.at.x + Math.sin(s.az) * d, s.at.y + Math.sin(s.el) * d, s.at.z - Math.cos(s.az) * Math.cos(s.el) * d); };
+  const shotPos = (s, o) => {
+    const d = s === SHOT.wide ? fitDistance() : s.d * SPAN * 0.56;
+    return o.set(s.at.x + Math.sin(s.az) * d, s.at.y + Math.sin(s.el) * d, s.at.z - Math.cos(s.az) * Math.cos(s.el) * d);
+  };
   let userCam = false, shotFrom = null, shotTo = SHOT.wide, shotT = 1;
   function setShot(s) { if (!s || s === shotTo) return; shotFrom = { pos: camera.position.clone(), tgt: controls.target.clone() }; shotTo = s; shotT = 0; }
   shotPos(SHOT.wide, camera.position); controls.target.copy(SHOT.wide.at);
